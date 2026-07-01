@@ -195,20 +195,46 @@ export class UsersController {
   }
 }
 
-### Scoped access — passing the authenticated user into the service
+### Scoped access — the `@CurrentUser()` decorator
 
-When users can only act on their own resources (not ADMIN-only, but owner-restricted), pass `req.user` into the service and let the service enforce ownership:
+When handlers need the authenticated user, don't read `req.user` directly.
+`req.user` is typed as `Express.User | undefined` — accessing it with `!`
+is a non-null assertion that Biome flags and strict TypeScript rejects.
+Repeating `if (!user) throw new UnauthorizedException()` across every
+handler is boilerplate that belongs in one place.
+
+The correct pattern is a `@CurrentUser()` param decorator:
+
+```typescript
+// src/common/decorators/current-user.decorator.ts
+import { createParamDecorator, ExecutionContext, UnauthorizedException } from "@nestjs/common";
+import type { Request } from "express";
+
+export const CurrentUser = createParamDecorator(
+  (_data: unknown, ctx: ExecutionContext) => {
+    const request = ctx.switchToHttp().getRequest<Request>();
+    if (!request.user) throw new UnauthorizedException();
+    return request.user;
+  },
+);
+```
+
+Use it in controllers — fully typed, no assertion, no repeated null check:
 
 ```typescript
 @Get()
-findAll(@Req() req: Request) {
-  const user = req.user;
-  if (!user) throw new UnauthorizedException();
-  return this.usersService.findAll(user.id, user.role);
+findAll(
+  @Param("projectId") projectId: string,
+  @CurrentUser() user: Express.User,
+) {
+  return this.taskService.findByProject(projectId, user.id, user.role);
 }
 ```
 
-The controller's only job here is extracting the user and throwing early if authentication is absent. Ownership logic lives in the service.
+TypeScript knows `user` is `Express.User` — not `Express.User | undefined`.
+The decorator handles the unauthorized case in one place. If a `@Public()`
+route accidentally tries to use `@CurrentUser()`, it throws a clean 401
+instead of crashing on an undefined access.
 
 ### Nested route params
 

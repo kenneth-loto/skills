@@ -106,6 +106,34 @@ app.use(
 );
 ```
 
+**If using Scalar instead of Swagger UI**, the same CSP conflict applies — but Scalar also loads assets from `cdn.jsdelivr.net` by default, so you need to add it explicitly or the UI silently fails to load:
+
+```typescript
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net"],
+        styleSrc: ["'self'", "'unsafe-inline'", "cdn.jsdelivr.net"],
+        imgSrc: ["'self'", "data:"],
+      },
+    },
+  }),
+);
+```
+
+To remove the external CDN dependency entirely, pin Scalar to a self-hosted or specific version URL via the `apiReference` config:
+
+```typescript
+apiReference({
+  cdn: "https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.25.28", // pinned version
+  content: document,
+});
+```
+
+Pinning the version also prevents unexpected UI changes when Scalar ships updates.
+
 **Case 3 — Full frontend app (NestJS serving HTML pages).**
 Use nonces instead of `'unsafe-inline'` — nonces generate a per-request random token that only your server-generated HTML knows about:
 

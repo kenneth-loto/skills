@@ -43,7 +43,7 @@ Every code example in this skill uses the Express API (`app.use()`). If you're o
 
 ## Helmet — HTTP security headers
 
-A single line fixes every missing header from a security scanner:
+A single line fixes most missing headers from a security scanner:
 
 ```typescript
 import helmet from "helmet";
@@ -128,6 +128,38 @@ app.use(
 ```
 
 **Validate your CSP:** use [CSP Evaluator](https://csp-evaluator.withgoogle.com/) — Helmet performs very little validation itself. A typo in a directive silently produces an invalid header with no error.
+
+### Permissions-Policy
+
+`Permissions-Policy` restricts which browser features and APIs can be used — geolocation, camera, microphone, payment, etc. Helmet does **not** set this header automatically (the spec was still in draft when Helmet's defaults were established), so scanners flag it even after you enable `helmet()`. You have to add it manually.
+
+For a pure API (no frontend features needed), deny everything:
+
+```typescript
+import type { Request, Response, NextFunction } from "express";
+
+app.use(helmet());
+
+// Permissions-Policy must be set manually — Helmet doesn't include it
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader(
+    "Permissions-Policy",
+    "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()",
+  );
+  next();
+});
+```
+
+`interest-cohort=()` opts your app out of Google's FLoC tracking — worth including even on APIs.
+
+For an app that genuinely needs specific browser features, allowlist only what you use:
+
+```typescript
+// Allow geolocation for your own origin only, deny everything else
+"Permissions-Policy": "geolocation=(self), camera=(), microphone=()"
+```
+
+This is the only header that requires manual middleware — everything else flagged by a scanner is covered by `helmet()` defaults.
 
 ## CORS
 
@@ -423,7 +455,7 @@ if (process.env.NODE_ENV !== "production") {
 Helmet does this automatically. If you're not using Helmet for some reason, do it manually:
 
 ```typescript
-app.use((req, res, next) => {
+app.use((_req: Request, res: Response, next: NextFunction) => {
   res.removeHeader("X-Powered-By");
   next();
 });
@@ -436,6 +468,7 @@ Not every measure applies to every app. Use this to decide what to enable:
 | Measure | Public API | Authenticated API |
 |---|---|---|
 | Helmet (base) | ✅ Always | ✅ Always |
+| Permissions-Policy | ✅ Always | ✅ Always |
 | CSP `'none'` fallback | ✅ JSON-only | ✅ JSON-only |
 | CSP explicit policy | If serving HTML | If serving HTML/Swagger |
 | CORS allowlist | Depends on intent | ✅ Always |
@@ -455,24 +488,27 @@ Run through this before deploying. In order of impact:
 
 1. `app.use(helmet())` is the first middleware registered in `main.ts`
 2. CSP is either explicitly configured or set to `defaultSrc: ["'none'"]` for pure APIs
-3. `app.enableCors()` specifies an explicit `origin` allowlist — not `*` unless intentional
-4. `ThrottlerModule` is imported and `ThrottlerGuard` registered via `APP_GUARD`
-5. `app.set("trust proxy", true)` is set if deployed behind a proxy/CDN
-6. `CustomThrottlerGuard` overrides `getTracker()` to use `X-Forwarded-For`
-7. `ValidationPipe` is global with `whitelist: true` and `forbidNonWhitelisted: true`
-8. Payload size limits set via `app.useBodyParser()` — not `express.json()` directly
-9. Global exception filter returns generic messages in production — no stack traces
-10. Swagger is gated behind `NODE_ENV !== "production"`
-11. Auth endpoints return the same message for "user not found" and "wrong password"
-12. Session/auth cookies have `httpOnly: true`, `secure: true`, `sameSite: "strict"`
+3. `Permissions-Policy` header set manually via typed Express middleware
+4. `app.enableCors()` specifies an explicit `origin` allowlist — not `*` unless intentional
+5. `ThrottlerModule` is imported and `ThrottlerGuard` registered via `APP_GUARD`
+6. `app.set("trust proxy", true)` is set if deployed behind a proxy/CDN
+7. `CustomThrottlerGuard` overrides `getTracker()` to use `X-Forwarded-For`
+8. `ValidationPipe` is global with `whitelist: true` and `forbidNonWhitelisted: true`
+9. Payload size limits set via `app.useBodyParser()` — not `express.json()` directly
+10. Global exception filter returns generic messages in production — no stack traces
+11. Swagger is gated behind `NODE_ENV !== "production"`
+12. Auth endpoints return the same message for "user not found" and "wrong password"
+13. Session/auth cookies have `httpOnly: true`, `secure: true`, `sameSite: "strict"`
 
-Run your app through [securityheaders.com](https://securityheaders.com) after deploying. An A or A+ on headers means steps 1–3 are correct.
+Run your app through [securityheaders.com](https://securityheaders.com) after deploying. An A or A+ on headers means steps 1–4 are correct.
 
 ## Anti-patterns
 
 - **`app.enableCors()` with no config or `origin: '*'`.** This is the default posture that gets flagged by every scanner. Always provide an explicit origin allowlist for authenticated APIs.
 - **Registering Helmet after route definitions.** Routes registered before `app.use(helmet())` respond without security headers. Helmet first, always.
 - **`contentSecurityPolicy: false` on a pure JSON API.** Technically safe but scanners still flag it. Use `defaultSrc: ["'none'"]` instead — same effect for JSON, better scanner score.
+- **Skipping `Permissions-Policy`.** Helmet won't set it for you — it requires manual middleware. Without it scanners flag it as missing even on an otherwise clean app.
+- **Untyped middleware parameters.** Raw `(req, res, next) => {}` without Express types triggers implicit `any` errors under strict TypeScript. Always type as `(_req: Request, res: Response, next: NextFunction)` and prefix unused params with `_`.
 - **Relying on CORS for server-to-server security.** CORS is enforced by browsers only. Non-browser clients ignore it entirely. Auth your server-to-server calls with API keys or mTLS.
 - **No `trust proxy` on a hosted platform.** Every user on Render/Railway/Cloudflare appears to be the same IP. One user hitting the rate limit blocks everyone.
 - **Using `express.json()` directly to set body size limits.** NestJS already registers its own parser — adding another causes double-parsing and empty `req.body`. Use `app.useBodyParser()` instead.

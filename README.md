@@ -52,6 +52,14 @@ Write strictly-typed Jest tests for services and controllers that use Prisma dir
 
 ---
 
+#### `nestjs/nestjs-security`
+
+**Use when securing a NestJS API.**
+
+Secure a NestJS API against real-world threats — HTTP security headers, CORS, rate limiting, CSRF, and input validation. Covers both public APIs and authenticated services.
+
+---
+
 ## The Engineering Loop
 
 ```
